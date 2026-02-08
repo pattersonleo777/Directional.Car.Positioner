@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuickKey ZIP Mapper</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --text: #f8fafc;
+            --accent: #38bdf8;
+            --success: #22c55e;
+        }
+
+        .color-0 { --key-color: #ef4444; } .color-1 { --key-color: #3b82f6; }
+        .color-2 { --key-color: #22c55e; } .color-3 { --key-color: #eab308; }
+        .color-4 { --key-color: #a855f7; } .color-5 { --key-color: #ec4899; }
+        .color-6 { --key-color: #06b6d4; } .color-7 { --key-color: #f97316; }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        header {
+            padding: 1rem;
+            background: var(--card);
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+            z-index: 100;
+        }
+
+        #gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 30px;
+            padding: 20px;
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+
+        .img-card {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .name-label {
+            font-size: 11px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #94a3b8;
+        }
+
+        .rename-preview {
+            font-size: 12px;
+            font-weight: bold;
+            color: var(--accent);
+            height: 1.2em;
+        }
+
+        .img-container {
+            position: relative;
+            aspect-ratio: 1;
+            border-radius: 8px;
+            background: #000;
+            cursor: crosshair;
+            transition: transform 0.2s;
+            border: 2px solid transparent;
+            overflow: hidden;
+        }
+
+        .img-container.active {
+            border-color: var(--accent);
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+        }
+
+        .img-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            pointer-events: none;
+            transition: filter 0.4s ease;
+        }
+
+        .compass-pointer {
+            position: absolute;
+            width: 2px;
+            height: 50%;
+            background: linear-gradient(to top, transparent, var(--accent));
+            bottom: 50%;
+            left: 50%;
+            transform-origin: bottom center;
+            pointer-events: none;
+            z-index: 20;
+            opacity: 0;
+        }
+
+        .img-container:hover .compass-pointer { opacity: 1; }
+
+        .degree-display {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 14px;
+            color: var(--accent);
+            z-index: 21;
+        }
+
+        .img-container.matched img {
+            filter: blur(8px) grayscale(0.5);
+            opacity: 0.6;
+        }
+
+        .img-container.matched::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-color: var(--saved-color, rgba(239, 68, 68, 0.4));
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        .img-container.matched::after {
+            content: "QUEUED";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: 900;
+            text-align: center;
+            text-shadow: 0 0 10px rgba(0,0,0,0.8);
+            z-index: 6;
+        }
+
+        #mapping-panel {
+            background: var(--card);
+            padding: 1rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 10px;
+            max-height: 180px;
+            overflow-y: auto;
+            border-top: 1px solid #334155;
+        }
+
+        .key-box {
+            background: #0f172a;
+            padding: 8px;
+            border-radius: 4px;
+            border: 2px solid var(--key-color, #475569);
+            cursor: pointer;
+        }
+
+        .key-box.active-toggle {
+            background: var(--key-color);
+        }
+
+        .key-box.active-toggle .key-label, .key-box.active-toggle .key-input { color: #000; }
+
+        .key-label { font-size: 10px; color: var(--key-color); font-weight: bold; display: flex; justify-content: space-between; }
+        .key-input { background: transparent; border: none; color: white; font-size: 12px; width: 100%; outline: none; margin-top: 4px; }
+
+        .btn-zip { background: var(--success) !important; color: white !important; }
+        .hidden { display: none; }
+        button { background: var(--accent); color: #000; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+        #status { font-size: 0.85rem; color: #94a3b8; flex-grow: 1; }
+    </style>
+</head>
+<body>
+
+<header>
+    <input type="file" id="fileInput" multiple accept="image/*" class="hidden">
+    <button onclick="document.getElementById('fileInput').click()">Import Images</button>
+    <button id="zipBtn" class="btn-zip">Download ZIP (0)</button>
+    <div id="status">Toggle a Key to Auto-Save. Click an image to queue for ZIP.</div>
+</header>
+
+<div id="gallery"></div>
+<div id="mapping-panel"></div>
+
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const gallery = document.getElementById('gallery');
+    const mappingPanel = document.getElementById('mapping-panel');
+    const zipBtn = document.getElementById('zipBtn');
+    const status = document.getElementById('status');
+    
+    let images = [];
+    let currentIndex = 0;
+    const mappings = {};
+    let activeToggleKey = null;
+    let currentDeg = 0;
+    const zipQueue = new Map(); // index -> { blob, fileName, color }
+
+    const colors = ['#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#ec4899', '#06b6d4', '#f97316'];
+
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach((char, i) => {
+        const color = colors[i % colors.length];
+        const div = document.createElement('div');
+        div.className = `key-box color-${i % colors.length}`;
+        div.id = `box-${char}`;
+        div.style.setProperty('--key-color', color);
+        div.innerHTML = `<div class="key-label"><span>KEY ${char}</span><span class="toggle-indicator">OFF</span></div>
+                         <input type="text" id="key-${char}" class="key-input" placeholder="Set name...">`;
+        
+        div.onclick = (e) => { if (e.target.tagName !== 'INPUT') toggleKey(char); };
+        mappingPanel.appendChild(div);
+        const input = div.querySelector('input');
+        input.addEventListener('input', (e) => {
+            mappings[char] = e.target.value.trim();
+            updateRenamePreviews();
+        });
+        input.addEventListener('click', (e) => e.stopPropagation());
+    });
+
+    function toggleKey(char) {
+        document.querySelectorAll('.key-box').forEach(el => {
+            el.classList.remove('active-toggle');
+            el.querySelector('.toggle-indicator').textContent = 'OFF';
+        });
+        if (activeToggleKey === char) {
+            activeToggleKey = null;
+        } else {
+            activeToggleKey = char;
+            const el = document.getElementById(`box-${char}`);
+            el.classList.add('active-toggle');
+            el.querySelector('.toggle-indicator').textContent = 'AUTO';
+        }
+        updateRenamePreviews();
+    }
+
+    fileInput.addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files);
+        gallery.innerHTML = '';
+        images = [];
+        zipQueue.clear();
+        updateZipBtn();
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const reader = new FileReader();
+            await new Promise(resolve => {
+                reader.onload = (event) => {
+                    const card = document.createElement('div');
+                    card.className = 'img-card';
+                    card.innerHTML = `
+                        <div class="name-label">${file.name}</div>
+                        <div class="rename-preview" id="rename-${i}"></div>
+                        <div class="img-container ${i===0?'active':''}" id="img-${i}">
+                            <img src="${event.target.result}">
+                            <div class="compass-pointer"></div>
+                            <div class="degree-display">0°</div>
+                        </div>
+                    `;
+                    const container = card.querySelector('.img-container');
+                    container.onmousemove = (e) => updateCompass(e, container, i);
+                    container.onclick = () => handleImageClick(i);
+                    gallery.appendChild(card);
+                    images.push({ blob: event.target.result, file: file });
+                    resolve();
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+    });
+
+    function updateCompass(e, container, index) {
+        const rect = container.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const degrees = (Math.round(Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI) + 90) + 360) % 360;
+        container.querySelector('.compass-pointer').style.transform = `translate(-50%, 0) rotate(${degrees}deg)`;
+        container.querySelector('.degree-display').textContent = `${degrees}°`;
+        if (container.classList.contains('active')) {
+            currentDeg = degrees;
+            updateRenamePreviews();
+        }
+    }
+
+    function updateRenamePreviews() {
+        images.forEach((_, i) => {
+            const preview = document.getElementById(`rename-${i}`);
+            if (activeToggleKey && mappings[activeToggleKey]) {
+                const deg = document.getElementById(`img-${i}`).querySelector('.degree-display').textContent;
+                preview.textContent = `Target: ${mappings[activeToggleKey]}_${deg}.png`;
+            } else {
+                preview.textContent = '';
+            }
+        });
+    }
+
+    function handleImageClick(index) {
+        selectImage(index);
+        if (activeToggleKey && mappings[activeToggleKey]) {
+            queueForZip(index, activeToggleKey, currentDeg);
+        }
+    }
+
+    function selectImage(index) {
+        document.querySelectorAll('.img-container').forEach(el => el.classList.remove('active'));
+        currentIndex = index;
+        const active = document.getElementById(`img-${index}`);
+        if(active) {
+            active.classList.add('active');
+            currentDeg = parseInt(active.querySelector('.degree-display').textContent) || 0;
+        }
+        updateRenamePreviews();
+    }
+
+    function queueForZip(index, key, deg) {
+        const label = mappings[key];
+        const color = colors["ABCDEFGHIJKLMNOPQRSTUVWXYZ".indexOf(key) % colors.length];
+        const fileName = `${label}_${deg}.png`;
+        
+        zipQueue.set(index, { blob: images[index].blob, fileName });
+        
+        const el = document.getElementById(`img-${index}`);
+        el.classList.add('matched');
+        el.style.setProperty('--saved-color', color + '66');
+        
+        updateZipBtn();
+        if (currentIndex < images.length - 1) selectImage(currentIndex + 1);
+    }
+
+    function updateZipBtn() {
+        zipBtn.textContent = `Download ZIP (${zipQueue.size})`;
+    }
+
+    zipBtn.onclick = async () => {
+        if (zipQueue.size === 0) return;
+        const zip = new JSZip();
+        zipQueue.forEach((data) => {
+            const base64Data = data.blob.split(',')[1];
+            zip.file(data.fileName, base64Data, {base64: true});
+        });
+        const content = await zip.generateAsync({type:"blob"});
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = "mapped_images.zip";
+        link.click();
+    };
+
+    window.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT') return;
+        const char = e.key.toUpperCase();
+        if (mappings[char] && images[currentIndex]) queueForZip(currentIndex, char, currentDeg);
+    });
+</script>
+</body>
+</html>
